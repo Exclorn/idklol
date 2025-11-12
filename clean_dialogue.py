@@ -1,56 +1,41 @@
 from pathlib import Path
+import json
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
 def clean_file(file_path):
-    text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    raw_text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
 
-    # 🧽 1. Remove system/configuration metadata (runSettings, model, etc.)
-    text = re.sub(r'("runSettings":.*?systemInstruction": {).*?(?=\n\S|$)', "", text, flags=re.DOTALL)
+    # 🧹 Extract all "text": "...", and their associated "role"
+    # Convert JSON-like text into something readable
+    pattern = re.compile(r'"role":\s*"(\w+)"\s*,\s*"tokenCount":\s*\d+\s*},?\s*{\s*"text":\s*"([^"]*?)"', re.DOTALL)
+    matches = pattern.findall(raw_text)
 
-    # 🧹 2. Remove "Thinking Process" sections
-    cleaned_text = re.sub(r"Thinking Process:.*?(?=\n\S|$)", "", text, flags=re.DOTALL)
-
-    # 🧩 3. Extract real dialogue (skip JSON lines and config)
     dialogue_lines = []
-    for line in cleaned_text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if re.match(r'^["{[\]]', line):  # Skip JSON/meta lines
-            continue
-        if any(keyword in line for keyword in [
-            "temperature", "topP", "topK", "maxOutputTokens", "safetySettings",
-            "HARM_CATEGORY", "responseMimeType", "enableCodeExecution",
-            "enableSearchAsATool", "enableBrowseAsATool", "thinkingBudget"
-        ]):
-            continue
-        if line.startswith(("user:", "model:")) or (
-            not line.lower().startswith(("system", "draft", "final", "here’s", "{", "}", "["))
-            and not re.match(r"^tokenCount", line)
-        ):
-            dialogue_lines.append(line)
 
-    # 🧠 4. Normalize and format as dialogue
-    formatted_dialogue = []
-    for line in dialogue_lines:
-        if line.startswith("model:"):
-            formatted_dialogue.append("ai:" + line[len("model:"):].strip())
-        elif line.startswith("user:"):
-            formatted_dialogue.append("user:" + line[len("user:"):].strip())
-        else:
-            if re.match(r"^(i |why|how|it|okay|ah|kinda|really|are|mai|ewa|nas)", line, re.I):
-                formatted_dialogue.append("user: " + line)
-            else:
-                formatted_dialogue.append("ai: " + line)
+    for role, text in matches:
+        text = text.encode("utf-8").decode("unicode_escape")  # decode \u codes
+        text = text.replace("\\n", "\n").strip()
+        if not text:
+            continue
 
-    cleaned_dialogue = "\n\n".join(formatted_dialogue)
+        if role.lower() == "user":
+            dialogue_lines.append(f"user: {text}")
+        elif role.lower() == "model":
+            # Remove thinking process segments
+            text = re.sub(r"Thinking Process:.*?(?=\n\S|$)", "", text, flags=re.DOTALL).strip()
+            dialogue_lines.append(f"ai: {text}")
 
-    # 🧾 5. Save
+    # Join messages cleanly with line breaks
+    cleaned_dialogue = "\n\n".join(dialogue_lines)
+
+    # Save cleaned output
     output_path = Path(file_path).parent / "Empathetic_Support_Full.txt"
     output_path.write_text(cleaned_dialogue, encoding="utf-8")
+
     return output_path
+
 
 def main():
     root = tk.Tk()
@@ -64,7 +49,8 @@ def main():
         return
 
     output = clean_file(file_path)
-    messagebox.showinfo("Success", f"✅ Cleaned file saved as:\n{output}")
+    messagebox.showinfo("Success", f"✅ Cleaned conversation saved as:\n{output}")
+
 
 if __name__ == "__main__":
     main()
