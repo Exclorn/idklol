@@ -5,12 +5,26 @@ from tkinter import filedialog, messagebox
 
 def clean_file(file_path):
     text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
-    cleaned_text = re.sub(r"Thinking Process:.*?(?=\n\S|$)", "", text, flags=re.DOTALL)
-    dialogue_lines = []
 
+    # 🧽 1. Remove system/configuration metadata (runSettings, model, etc.)
+    text = re.sub(r'("runSettings":.*?systemInstruction": {).*?(?=\n\S|$)', "", text, flags=re.DOTALL)
+
+    # 🧹 2. Remove "Thinking Process" sections
+    cleaned_text = re.sub(r"Thinking Process:.*?(?=\n\S|$)", "", text, flags=re.DOTALL)
+
+    # 🧩 3. Extract real dialogue (skip JSON lines and config)
+    dialogue_lines = []
     for line in cleaned_text.splitlines():
         line = line.strip()
         if not line:
+            continue
+        if re.match(r'^["{[\]]', line):  # Skip JSON/meta lines
+            continue
+        if any(keyword in line for keyword in [
+            "temperature", "topP", "topK", "maxOutputTokens", "safetySettings",
+            "HARM_CATEGORY", "responseMimeType", "enableCodeExecution",
+            "enableSearchAsATool", "enableBrowseAsATool", "thinkingBudget"
+        ]):
             continue
         if line.startswith(("user:", "model:")) or (
             not line.lower().startswith(("system", "draft", "final", "here’s", "{", "}", "["))
@@ -18,6 +32,7 @@ def clean_file(file_path):
         ):
             dialogue_lines.append(line)
 
+    # 🧠 4. Normalize and format as dialogue
     formatted_dialogue = []
     for line in dialogue_lines:
         if line.startswith("model:"):
@@ -31,6 +46,8 @@ def clean_file(file_path):
                 formatted_dialogue.append("ai: " + line)
 
     cleaned_dialogue = "\n\n".join(formatted_dialogue)
+
+    # 🧾 5. Save
     output_path = Path(file_path).parent / "Empathetic_Support_Full.txt"
     output_path.write_text(cleaned_dialogue, encoding="utf-8")
     return output_path
