@@ -1,55 +1,70 @@
-from pathlib import Path
 import json
 import re
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+def extract_dialogue(data):
+    dialogue = []
+    if isinstance(data, dict):
+        if "role" in data and "text" in data:
+            role = data["role"]
+            text = data["text"]
+            if not data.get("isThought", False):  # skip thinking process
+                text = text.encode("utf-8").decode("unicode_escape").replace("\\n", "\n").strip()
+                dialogue.append((role, text))
+        for v in data.values():
+            dialogue.extend(extract_dialogue(v))
+    elif isinstance(data, list):
+        for item in data:
+            dialogue.extend(extract_dialogue(item))
+    return dialogue
+
+
 def clean_file(file_path):
-    raw_text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
 
-    # 🧹 Extract all "text": "...", and their associated "role"
-    # Convert JSON-like text into something readable
-    pattern = re.compile(r'"role":\s*"(\w+)"\s*,\s*"tokenCount":\s*\d+\s*},?\s*{\s*"text":\s*"([^"]*?)"', re.DOTALL)
-    matches = pattern.findall(raw_text)
+    # Fix trailing commas or partial JSON structure
+    text = re.sub(r",\s*([}\]])", r"\1", text)
 
-    dialogue_lines = []
+    try:
+        data = json.loads(text)
+    except Exception:
+        # fallback: find the chunkedPrompt area only
+        match = re.search(r'"chunks":\s*(\[.*\])\s*}', text, re.DOTALL)
+        if not match:
+            raise ValueError("Could not find valid JSON in file.")
+        chunks_str = match.group(1)
+        data = json.loads(f"[{chunks_str.strip('[]')}]")
 
-    for role, text in matches:
-        text = text.encode("utf-8").decode("unicode_escape")  # decode \u codes
-        text = text.replace("\\n", "\n").strip()
-        if not text:
-            continue
+    dialogue = extract_dialogue(data)
 
-        if role.lower() == "user":
-            dialogue_lines.append(f"user: {text}")
-        elif role.lower() == "model":
-            # Remove thinking process segments
-            text = re.sub(r"Thinking Process:.*?(?=\n\S|$)", "", text, flags=re.DOTALL).strip()
-            dialogue_lines.append(f"ai: {text}")
+    cleaned_lines = []
+    for role, msg in dialogue:
+        role_tag = "user" if role.lower() == "user" else "ai"
+        cleaned_lines.append(f"{role_tag}: {msg}")
 
-    # Join messages cleanly with line breaks
-    cleaned_dialogue = "\n\n".join(dialogue_lines)
-
-    # Save cleaned output
-    output_path = Path(file_path).parent / "Empathetic_Support_Full.txt"
-    output_path.write_text(cleaned_dialogue, encoding="utf-8")
-
-    return output_path
+    output = "\n\n".join(cleaned_lines)
+    out_path = Path(file_path).parent / "Empathetic_Support_Full.txt"
+    out_path.write_text(output, encoding="utf-8")
+    return out_path
 
 
 def main():
     root = tk.Tk()
     root.withdraw()
-    file_path = filedialog.askopenfilename(
-        title="Select your 'Empathetic Support for Loneliness.txt' file",
+    path = filedialog.askopenfilename(
+        title="Select your Gemini export .txt file",
         filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
     )
-    if not file_path:
-        messagebox.showinfo("Cancelled", "No file selected.")
-        return
+    if not path:
+        return messagebox.showinfo("Cancelled", "No file selected.")
 
-    output = clean_file(file_path)
-    messagebox.showinfo("Success", f"✅ Cleaned conversation saved as:\n{output}")
+    try:
+        out = clean_file(path)
+        messagebox.showinfo("Done", f"✅ Cleaned chat saved as:\n{out}")
+    except Exception as e:
+        messagebox.showerror("Error", f"❌ Failed to process file:\n{e}")
 
 
 if __name__ == "__main__":
